@@ -14,19 +14,25 @@ final class SleepController {
 
     private init() {}
 
-    /// Corre `pmset -a disablesleep <0|1>` elevado, via AppleScript
-    /// (mostra o prompt nativo de password/Touch ID do macOS).
+    /// Elevado via prompt AppleScript (Touch ID/password). Usado como fallback
+    /// quando o acesso sem password ([[PrivilegedAccess]]) não está instalado.
     @discardableResult
-    private func setDisableSleep(_ on: Bool) -> Bool {
+    private func setDisableSleepPrompting(_ on: Bool) -> Bool {
         let value = on ? "1" : "0"
         let script = "do shell script \"pmset -a disablesleep \(value)\" with administrator privileges"
         var error: NSDictionary?
-        let applescript = NSAppleScript(source: script)
-        applescript?.executeAndReturnError(&error)
+        NSAppleScript(source: script)?.executeAndReturnError(&error)
         if let error {
             NSLog("Sleepy: pmset disablesleep=\(value) falhou: \(error)")
         }
         return error == nil
+    }
+
+    /// Sem password primeiro (sem prompt); só cai no prompt de admin se a regra
+    /// sudoers não estiver instalada.
+    private func setDisableSleep(_ on: Bool) -> Bool {
+        if PrivilegedAccess.setDisableSleep(on) { return true }
+        return setDisableSleepPrompting(on)
     }
 
     func enable() {
@@ -39,10 +45,10 @@ final class SleepController {
         if setDisableSleep(false) { isActive = false }
     }
 
-    /// Chamado no arranque da app: garante que não fica preso em
-    /// disablesleep=1 de uma sessão anterior que tenha crashado.
+    /// Reset defensivo silencioso no arranque — só quando o acesso sem password
+    /// existe, para nunca atirar um prompt de admin no startup. (Sem ele, um
+    /// valor preso de uma sessão que crashou limpa-se no próximo toggle manual.)
     func resetOnLaunch() {
-        setDisableSleep(false)
-        isActive = false
+        if PrivilegedAccess.setDisableSleep(false) { isActive = false }
     }
 }

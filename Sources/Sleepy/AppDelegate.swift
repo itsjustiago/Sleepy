@@ -60,6 +60,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let active = SleepController.shared.isActive
         let toggle = addItem(to: menu, active ? "Impedir sleep (ligado)" : "Impedir sleep", #selector(toggleSleep))
         toggle.state = active ? .on : .off
+
+        // Nudge to set up passwordless toggling while it isn't installed yet.
+        if !PrivilegedAccess.isInstalled {
+            let hint = addItem(to: menu, "Ativar acesso sem password…", #selector(enablePasswordless))
+            hint.attributedTitle = NSAttributedString(
+                string: hint.title,
+                attributes: [.foregroundColor: NSColor.secondaryLabelColor])
+        }
         menu.addItem(.separator())
 
         let login = addItem(to: menu, "Iniciar no login", #selector(toggleLoginItem))
@@ -90,6 +98,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         updateIcon()
     }
+
+    @objc private func enablePasswordless() { _ = PrivilegedAccess.install() }
 
     @objc private func toggleLoginItem() { LoginItem.toggle() }
 

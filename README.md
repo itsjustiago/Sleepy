@@ -80,11 +80,25 @@ Sources/Sleepy/
   UpdateController.swift   — download + swap + relaunch automático
 ```
 
+## Não pedir password a cada toggle
+
+Por defeito, cada toggle corre `pmset -a disablesleep` com privilégios de admin,
+por isso o macOS pede Touch ID/password de cada vez. Para eliminar isso, ativa
+**"Não pedir password a cada toggle"** nas Definições (ou *Ativar acesso sem
+password…* no menu): pede admin **uma vez** e instala uma regra `sudoers`
+mínima em `/etc/sudoers.d/sleepy` que permite ao teu utilizador correr **apenas**
+`pmset -a disablesleep 0|1` sem password. Sem wildcards, mais nada — não é
+superfície de escalada de privilégios, e é validada com `visudo` antes de ser
+instalada. Desmarca a opção para a remover.
+
+Optámos por isto em vez de um helper privilegiado (SMAppService/SMJobBless):
+é muito menos código e funciona bem com a assinatura self-signed, que dá
+problemas com o matching de code-signing exigido pelo SMJobBless.
+
 ## Notes
 
-- Cada toggle liga/desliga `pmset -a disablesleep`, que exige privilégios de
-  admin — por isso o prompt do macOS aparece a cada mudança de estado. Um
-  helper privilegiado sem prompt repetido está planeado para uma v1.1 (ver
-  `plan.md`).
-- O estado é sempre reposto a "sleep normal" ao sair da app ou no arranque,
-  para nunca deixar o Mac preso em não-sleep.
+- Enquanto o acesso sem password não estiver instalado, cada toggle mostra o
+  prompt de admin do macOS — é esperado.
+- O estado é sempre reposto a "sleep normal" ao sair da app. No arranque, o
+  reset defensivo só acontece silenciosamente se o acesso sem password estiver
+  instalado (para nunca atirar um prompt no startup).
