@@ -21,6 +21,8 @@ Uma "Amphetamine/Caffeine" simplificada, feita por nós, sem anúncios nem lixo.
 
 - **Toggle "Impedir sleep"** na menu bar — impede o sleep do Mac mesmo com a
   tampa fechada, sem precisar de ecrã externo nem estar ligado à corrente.
+  Trava os dois caminhos: o sleep por **inatividade** (IOKit power assertion)
+  e o sleep por **fechar a tampa** (`pmset -a disablesleep`).
 - **Ícone dinâmico** — sol quando ativo, lua quando o comportamento é o normal.
 - Nunca fica "preso": ao sair da app ou reiniciá-la, o estado é sempre
   reposto para o normal.
@@ -94,6 +96,23 @@ instalada. Desmarca a opção para a remover.
 Optámos por isto em vez de um helper privilegiado (SMAppService/SMJobBless):
 é muito menos código e funciona bem com a assinatura self-signed, que dá
 problemas com o matching de code-signing exigido pelo SMJobBless.
+
+## Como funciona
+
+São precisos **dois** mecanismos, porque cobrem coisas diferentes:
+
+| Mecanismo | Trava | Precisa de admin? |
+|---|---|---|
+| IOKit `PreventUserIdleSystemSleep` | Sleep por inatividade (o timer `sleep` do `pmset -g`) | Não |
+| `pmset -a disablesleep 1` | Sleep ao fechar a tampa | Sim |
+
+O `disablesleep` sozinho **não** trava o idle sleep, por isso o Sleepy segura
+os dois enquanto o toggle está ligado. Para confirmar, com o toggle ligado:
+
+```bash
+pmset -g assertions | grep Sleepy   # deve listar PreventUserIdleSystemSleep
+pmset -g | grep SleepDisabled       # deve mostrar 1
+```
 
 ## Notes
 

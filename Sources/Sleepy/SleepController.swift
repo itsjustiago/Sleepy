@@ -1,18 +1,52 @@
 import Foundation
+import IOKit.pwr_mgt
 
 /// Núcleo do Sleepy: impede o Mac de dormir, incluindo com a tampa fechada.
 ///
-/// Usa `pmset -a disablesleep` (não a IOKit power assertion) porque é o
-/// único mecanismo que sobrevive ao lid-close sem precisar de ecrã externo
-/// nem estar ligado à corrente — ver plan.md secção 1 para a comparação.
-/// A contrapartida é que exige privilégios de admin a cada chamada (prompt
-/// nativo via AppleScript); um helper privilegiado sem prompt fica para v1.1.
+/// São precisos **dois** mecanismos, e cobrem coisas diferentes:
+///
+/// 1. `pmset -a disablesleep` — sobrevive ao lid-close sem precisar de ecrã
+///    externo nem corrente, mas exige admin (prompt, ou a regra sudoers de
+///    [[PrivilegedAccess]]).
+/// 2. IOKit power assertion `PreventUserIdleSystemSleep` — impede o sleep por
+///    inatividade (o timer `sleep` do `pmset -g`). Não precisa de privilégios.
+///
+/// O `disablesleep` sozinho não trava o idle sleep, por isso mantemos os dois
+/// enquanto o toggle está ligado.
 final class SleepController {
     static let shared = SleepController()
 
     private(set) var isActive = false
 
+    private var assertionID: IOPMAssertionID = 0
+    private var hasAssertion = false
+
     private init() {}
+
+    // MARK: - IOKit power assertion (idle sleep)
+
+    /// Segura uma assertion que impede o sleep por inatividade. Sem privilégios.
+    /// O display continua livre para adormecer (queremos isso de tampa fechada).
+    private func createAssertion() -> Bool {
+        guard !hasAssertion else { return true }
+        var id: IOPMAssertionID = 0
+        let result = IOPMAssertionCreateWithName(
+            kIOPMAssertionTypePreventUserIdleSystemSleep as CFString,
+            IOPMAssertionLevel(kIOPMAssertionLevelOn),
+            "Sleepy: impedir sleep por inatividade" as CFString,
+            &id)
+        guard result == kIOReturnSuccess else { return false }
+        assertionID = id
+        hasAssertion = true
+        return true
+    }
+
+    private func releaseAssertion() {
+        guard hasAssertion else { return }
+        IOPMAssertionRelease(assertionID)
+        hasAssertion = false
+        assertionID = 0
+    }
 
     /// Elevado via prompt AppleScript (Touch ID/password). Usado como fallback
     /// quando o acesso sem password ([[PrivilegedAccess]]) não está instalado.
@@ -37,12 +71,20 @@ final class SleepController {
 
     func enable() {
         guard !isActive else { return }
-        isActive = setDisableSleep(true)
+        // Sem o disablesleep não há proteção de lid-close — se o utilizador
+        // cancelar o prompt de admin, não fingimos que ficou ligado.
+        guard setDisableSleep(true) else { return }
+        if !createAssertion() {
+            NSLog("Sleepy: falha a criar a power assertion — o idle sleep pode ocorrer")
+        }
+        isActive = true
     }
 
     func disable() {
         guard isActive else { return }
-        if setDisableSleep(false) { isActive = false }
+        guard setDisableSleep(false) else { return }
+        releaseAssertion()
+        isActive = false
     }
 
     /// Reset defensivo silencioso no arranque — só quando o acesso sem password

@@ -40,7 +40,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let symbol = active ? Self.activeSymbol : Self.inactiveSymbol
         let description = active ? "Sleepy — sleep impedido" : "Sleepy — sleep normal"
         let image = NSImage(systemSymbolName: symbol, accessibilityDescription: description)
-        image?.isTemplate = !active
+        image?.isTemplate = true  // monocromático: branco na menu bar escura, adapta-se
         statusItem?.button?.image = image
     }
 
