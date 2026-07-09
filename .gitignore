@@ -1,0 +1,16 @@
+# Build artifacts
+.build/
+.swiftpm/
+DerivedData/
+
+# App bundle & release archives (distributed via GitHub Releases)
+Sleepy.app/
+*.zip
+*.dmg
+
+# Icon build intermediates (Sleepy.icns is committed)
+Sleepy.iconset/
+icon-preview.png
+
+# macOS
+.DS_Store
