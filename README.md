@@ -114,10 +114,29 @@ pmset -g assertions | grep Sleepy   # deve listar PreventUserIdleSystemSleep
 pmset -g | grep SleepDisabled       # deve mostrar 1
 ```
 
+## Como sobrevive a relaunches
+
+O Sleepy usa **dois** mecanismos ao mesmo tempo, porque cobrem coisas diferentes:
+
+| Mecanismo | Trava | Precisa de admin |
+|---|---|---|
+| `pmset -a disablesleep 1` | sleep ao fechar a tampa | sim |
+| IOKit `PreventUserIdleSystemSleep` | sleep por inatividade | não |
+
+O estado **persiste**: se a app crashar, for recompilada, ou se o auto-updater
+a reiniciar, ela volta a armar os dois no arranque. Sem isso a proteção caía em
+silêncio a meio de uma tarefa longa — exatamente o cenário para que existe.
+
+Como contrapeso, há **auto-desligar** ao fim de N horas (default 8h,
+configurável nas Definições, ou "Nunca"). Sair da app pelo menu desliga sempre.
+
 ## Notes
 
 - Enquanto o acesso sem password não estiver instalado, cada toggle mostra o
   prompt de admin do macOS — é esperado.
-- O estado é sempre reposto a "sleep normal" ao sair da app. No arranque, o
-  reset defensivo só acontece silenciosamente se o acesso sem password estiver
-  instalado (para nunca atirar um prompt no startup).
+- No arranque o Sleepy nunca mostra prompts: só usa o caminho sem password. O
+  ícone reflete o `SleepDisabled` real do sistema, não o que a app julga ter
+  feito.
+- O sleep do **display** é deixado em paz de propósito: de tampa fechada,
+  manter o ecrã aceso só gastaria bateria.
+- Debug: `SLEEPY_DEBUG_ENABLE=1` liga o toggle no arranque, sem clicar no menu.

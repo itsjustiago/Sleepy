@@ -12,15 +12,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
-        SleepController.shared.resetOnLaunch()
         setupStatusItem()
+        SleepController.shared.onStateChange = { [weak self] in self?.updateIcon() }
+        SleepController.shared.restoreOnLaunch()
 
         if Updater.autoCheckEnabled {
             Updater.check { [weak self] info in self?.availableUpdate = info }
         }
+
+        // Debug hook: liga o toggle sem clicar no menu (usado para verificar o
+        // re-arm no relaunch). Só funciona com o acesso sem password instalado.
+        if ProcessInfo.processInfo.environment["SLEEPY_DEBUG_ENABLE"] == "1" {
+            SleepController.shared.enable()
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        // O auto-updater relança-nos de propósito: manter a proteção e deixar o
+        // restoreOnLaunch re-armar do outro lado.
+        guard !SleepController.shared.isRelaunching else { return }
         SleepController.shared.disable()
     }
 
@@ -60,6 +70,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let active = SleepController.shared.isActive
         let toggle = addItem(to: menu, active ? "Impedir sleep (ligado)" : "Impedir sleep", #selector(toggleSleep))
         toggle.state = active ? .on : .off
+
+        if let off = SleepController.shared.autoOffDate {
+            let fmt = DateFormatter()
+            fmt.dateFormat = "HH:mm"
+            let info = NSMenuItem(title: "Desliga sozinho às \(fmt.string(from: off))", action: nil, keyEquivalent: "")
+            info.isEnabled = false
+            menu.addItem(info)
+        }
 
         // Nudge to set up passwordless toggling while it isn't installed yet.
         if !PrivilegedAccess.isInstalled {

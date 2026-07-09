@@ -121,6 +121,10 @@ final class UpdateController: NSObject {
         bash.arguments = [scriptURL.path]
         do { try bash.run() } catch { fail("Falha ao instalar a atualização."); return }
 
+        // Não desarmar o sleep ao sair: a app vai voltar já a seguir e o
+        // restoreOnLaunch re-arma. Sem isto, um update a meio de uma tarefa
+        // longa deixava o Mac adormecer.
+        SleepController.shared.isRelaunching = true
         DispatchQueue.main.async { self.model.status = "A reiniciar…" }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { NSApp.terminate(nil) }
     }
