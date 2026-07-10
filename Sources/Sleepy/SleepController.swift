@@ -3,18 +3,24 @@ import IOKit.pwr_mgt
 
 /// Núcleo do Sleepy: impede o Mac de dormir, incluindo com a tampa fechada.
 ///
-/// São precisos **dois** mecanismos, e cobrem coisas diferentes:
+/// São precisos **três** mecanismos, e cobrem coisas diferentes:
 ///
 /// 1. `pmset -a disablesleep` — sobrevive ao lid-close sem precisar de ecrã
 ///    externo nem corrente, mas exige admin (prompt, ou a regra sudoers de
 ///    [[PrivilegedAccess]]).
-/// 2. IOKit power assertion `PreventUserIdleSystemSleep` — impede o sleep por
-///    inatividade (o timer `sleep` do `pmset -g`). Não precisa de privilégios.
+/// 2. IOKit `PreventUserIdleSystemSleep` (= `caffeinate -i`) — trava o sleep
+///    por inatividade. Funciona em bateria. Não trava os ciclos de manutenção.
+/// 3. IOKit `PreventSystemSleep` (= `caffeinate -s`) — trava o sistema de
+///    dormir de forma mais forte, incluindo os `Maintenance Sleep` /
+///    `Sleep Service Back to Sleep`. Só é respeitado na corrente (num portátil,
+///    em bateria é ignorado — daí precisarmos também do nº 2). É a assertion
+///    que o NoSleep usa.
 ///
-/// O estado é persistido: um crash, um rebuild ou o auto-updater relançam a
-/// app, e sem isso a proteção caía em silêncio a meio de uma tarefa longa.
-/// Para não deixar o Mac acordado por esquecimento, há auto-desligar ao fim de
-/// `autoOffHours` (default 8h).
+/// Segurar (2) + (3) é o equivalente a `caffeinate -s -i`: cobre bateria e
+/// corrente. O estado é persistido: um crash, um rebuild ou o auto-updater
+/// relançam a app, e sem isso a proteção caía em silêncio a meio de uma tarefa
+/// longa. Para não deixar o Mac acordado por esquecimento, há auto-desligar ao
+/// fim de `autoOffHours` (default 8h).
 final class SleepController {
     static let shared = SleepController()
 
@@ -26,8 +32,12 @@ final class SleepController {
     /// O auto-updater relança a app de propósito — nesse caso não desarmamos.
     var isRelaunching = false
 
-    private var assertionID: IOPMAssertionID = 0
-    private var hasAssertion = false
+    /// As duas assertions IOKit que seguramos em conjunto (bateria + corrente).
+    private static let assertionTypes = [
+        kIOPMAssertionTypePreventUserIdleSystemSleep,
+        kIOPMAssertionTypePreventSystemSleep,
+    ]
+    private var assertionIDs: [IOPMAssertionID] = []
     private var autoOffTimer: Timer?
 
     private let activeKey = "sleepActive"
@@ -67,30 +77,33 @@ final class SleepController {
         return false
     }
 
-    // MARK: - IOKit power assertion (idle sleep)
+    // MARK: - IOKit power assertions (idle + system sleep)
 
-    /// Segura uma assertion que impede o sleep por inatividade. Sem privilégios.
-    /// O display continua livre para adormecer (queremos isso de tampa fechada).
+    /// Segura as duas assertions (idle + system). Sem privilégios. O display
+    /// continua livre para adormecer (queremos isso de tampa fechada).
     @discardableResult
     private func createAssertion() -> Bool {
-        guard !hasAssertion else { return true }
-        var id: IOPMAssertionID = 0
-        let result = IOPMAssertionCreateWithName(
-            kIOPMAssertionTypePreventUserIdleSystemSleep as CFString,
-            IOPMAssertionLevel(kIOPMAssertionLevelOn),
-            "Sleepy: impedir sleep por inatividade" as CFString,
-            &id)
-        guard result == kIOReturnSuccess else { return false }
-        assertionID = id
-        hasAssertion = true
-        return true
+        guard assertionIDs.isEmpty else { return true }
+        var all = true
+        for type in Self.assertionTypes {
+            var id: IOPMAssertionID = 0
+            let result = IOPMAssertionCreateWithName(
+                type as CFString,
+                IOPMAssertionLevel(kIOPMAssertionLevelOn),
+                "Sleepy: impedir sleep" as CFString,
+                &id)
+            if result == kIOReturnSuccess {
+                assertionIDs.append(id)
+            } else {
+                all = false
+            }
+        }
+        return all
     }
 
     private func releaseAssertion() {
-        guard hasAssertion else { return }
-        IOPMAssertionRelease(assertionID)
-        hasAssertion = false
-        assertionID = 0
+        for id in assertionIDs { IOPMAssertionRelease(id) }
+        assertionIDs.removeAll()
     }
 
     // MARK: - pmset disablesleep (lid-close)

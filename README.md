@@ -116,12 +116,18 @@ pmset -g | grep SleepDisabled       # deve mostrar 1
 
 ## Como sobrevive a relaunches
 
-O Sleepy usa **dois** mecanismos ao mesmo tempo, porque cobrem coisas diferentes:
+O Sleepy usa **três** mecanismos ao mesmo tempo, porque cobrem coisas diferentes:
 
-| Mecanismo | Trava | Precisa de admin |
-|---|---|---|
-| `pmset -a disablesleep 1` | sleep ao fechar a tampa | sim |
-| IOKit `PreventUserIdleSystemSleep` | sleep por inatividade | não |
+| Mecanismo | Trava | Bateria? | Precisa de admin |
+|---|---|---|---|
+| `pmset -a disablesleep 1` | sleep ao fechar a tampa | sim | sim |
+| IOKit `PreventUserIdleSystemSleep` (`caffeinate -i`) | sleep por inatividade | sim | não |
+| IOKit `PreventSystemSleep` (`caffeinate -s`) | maintenance / dark-wake sleep | só na corrente | não |
+
+As duas assertions IOKit em conjunto são o equivalente a `caffeinate -s -i`. A
+`PreventSystemSleep` (a que apps como o NoSleep usam) é a mais forte, mas num
+portátil só é respeitada na corrente — por isso seguramos também a
+`PreventUserIdleSystemSleep`, que funciona em bateria.
 
 O estado **persiste**: se a app crashar, for recompilada, ou se o auto-updater
 a reiniciar, ela volta a armar os dois no arranque. Sem isso a proteção caía em
