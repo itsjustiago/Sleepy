@@ -1,11 +1,15 @@
 import AppKit
+import SwiftUI
 import ServiceManagement
 
-final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var statusItem: NSStatusItem?
+    private var popover: NSPopover?
+    private var lastPopoverClose = Date.distantPast
+    private let menuModel = SleepMenuModel()
     private let settings = SettingsWindow()
     private let updater = UpdateController()
-    private var availableUpdate: UpdateInfo?
+    private var availableUpdate: UpdateInfo? { didSet { menuModel.availableUpdate = availableUpdate } }
 
     private static let activeSymbol = "sun.max.fill"
     private static let inactiveSymbol = "moon.zzz"
@@ -13,7 +17,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         setupStatusItem()
-        SleepController.shared.onStateChange = { [weak self] in self?.updateIcon() }
+        settings.onStartUpdate = { [weak self] info in self?.updater.start(info) }
+        SleepController.shared.onStateChange = { [weak self] in
+            self?.updateIcon()
+            self?.refreshMenuModel()
+        }
         SleepController.shared.restoreOnLaunch()
 
         if Updater.autoCheckEnabled {
@@ -38,11 +46,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func setupStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        let menu = NSMenu()
-        menu.delegate = self
-        item.menu = menu
+        item.button?.target = self
+        item.button?.action = #selector(togglePopover)
         statusItem = item
         updateIcon()
+        buildPopover()
     }
 
     private func updateIcon() {
@@ -54,80 +62,85 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItem?.button?.image = image
     }
 
-    // Rebuild the menu each time it opens so the toggle state stays fresh.
-    func menuNeedsUpdate(_ menu: NSMenu) {
-        menu.removeAllItems()
+    // MARK: - Menu popover
 
-        // Banner when a newer release is available on GitHub.
-        if let update = availableUpdate {
-            let item = addItem(to: menu, "⤓ Atualizar para \(update.version)…", #selector(openUpdate))
-            item.attributedTitle = NSAttributedString(
-                string: item.title,
-                attributes: [.foregroundColor: NSColor.systemGreen])
-            menu.addItem(.separator())
-        }
+    /// The menu-bar dropdown is a SwiftUI panel in an `NSPopover`, matching Facet.
+    private func buildPopover() {
+        let panel = MenuPanel(
+            model: menuModel,
+            onToggleSleep: { [weak self] in self?.toggleSleep() },
+            onEnablePasswordless: { [weak self] in
+                _ = PrivilegedAccess.install()
+                self?.refreshMenuModel()
+            },
+            onToggleLogin: { [weak self] on in
+                LoginItem.setEnabled(on)
+                self?.menuModel.loginAtStartup = LoginItem.isEnabled
+            },
+            onSettings: { [weak self] in self?.dismissPopover(); self?.settings.show() },
+            onUpdate: { [weak self] in
+                self?.dismissPopover()
+                if let update = self?.availableUpdate { self?.updater.start(update) }
+            },
+            onQuit: { NSApp.terminate(nil) })
 
-        let active = SleepController.shared.isActive
-        let toggle = addItem(to: menu, active ? "Impedir sleep (ligado)" : "Impedir sleep", #selector(toggleSleep))
-        toggle.state = active ? .on : .off
+        let hosting = NSHostingController(rootView: panel)
+        hosting.sizingOptions = .preferredContentSize
 
-        if let off = SleepController.shared.autoOffDate {
-            let fmt = DateFormatter()
-            fmt.dateFormat = "HH:mm"
-            let info = NSMenuItem(title: "Desliga sozinho às \(fmt.string(from: off))", action: nil, keyEquivalent: "")
-            info.isEnabled = false
-            menu.addItem(info)
-        }
-
-        // Nudge to set up passwordless toggling while it isn't installed yet.
-        if !PrivilegedAccess.isInstalled {
-            let hint = addItem(to: menu, "Ativar acesso sem password…", #selector(enablePasswordless))
-            hint.attributedTitle = NSAttributedString(
-                string: hint.title,
-                attributes: [.foregroundColor: NSColor.secondaryLabelColor])
-        }
-        menu.addItem(.separator())
-
-        let login = addItem(to: menu, "Iniciar no login", #selector(toggleLoginItem))
-        login.state = LoginItem.isEnabled ? .on : .off
-
-        addItem(to: menu, "Definições…", #selector(showSettings))
-        menu.addItem(.separator())
-
-        let quit = addItem(to: menu, "Sair do Sleepy", #selector(quit))
-        quit.keyEquivalent = "q"
+        let pop = NSPopover()
+        pop.behavior = .transient
+        pop.animates = true
+        pop.delegate = self
+        pop.contentViewController = hosting
+        popover = pop
     }
 
-    @discardableResult
-    private func addItem(to menu: NSMenu, _ title: String, _ action: Selector) -> NSMenuItem {
-        let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
-        item.target = self
-        menu.addItem(item)
-        return item
+    @objc private func togglePopover() {
+        guard let popover, let button = statusItem?.button else { return }
+        if popover.isShown {
+            popover.performClose(nil)
+        } else {
+            // Clicking the icon while the popover is open dismisses it via the
+            // transient behaviour first; don't let the same click reopen it.
+            if Date().timeIntervalSince(lastPopoverClose) < 0.2 { return }
+            refreshMenuModel()
+            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        }
+    }
+
+    func popoverDidClose(_ notification: Notification) {
+        lastPopoverClose = Date()
+    }
+
+    private func dismissPopover() { popover?.performClose(nil) }
+
+    /// Mirror the live system state into the panel's model before it shows.
+    private func refreshMenuModel() {
+        menuModel.isActive = SleepController.shared.isActive
+        menuModel.autoOffText = autoOffText()
+        menuModel.passwordlessInstalled = PrivilegedAccess.isInstalled
+        menuModel.loginAtStartup = LoginItem.isEnabled
+        menuModel.availableUpdate = availableUpdate
+    }
+
+    private func autoOffText() -> String? {
+        guard let off = SleepController.shared.autoOffDate else { return nil }
+        let fmt = DateFormatter()
+        fmt.dateFormat = "HH:mm"
+        return "Desliga sozinho às \(fmt.string(from: off))"
     }
 
     // MARK: - Actions
 
-    @objc private func toggleSleep() {
+    private func toggleSleep() {
         if SleepController.shared.isActive {
             SleepController.shared.disable()
         } else {
             SleepController.shared.enable()
         }
         updateIcon()
+        refreshMenuModel()
     }
-
-    @objc private func enablePasswordless() { _ = PrivilegedAccess.install() }
-
-    @objc private func toggleLoginItem() { LoginItem.toggle() }
-
-    @objc private func showSettings() { settings.show() }
-
-    @objc private func openUpdate() {
-        if let update = availableUpdate { updater.start(update) }
-    }
-
-    @objc private func quit() { NSApp.terminate(nil) }
 }
 
 // MARK: - Launch at login
